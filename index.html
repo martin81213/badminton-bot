@@ -26,6 +26,7 @@
   .opt .tick { color:var(--accent); display:none; }
   .opt.on .tick { display:inline; }
   .opt small { color:var(--muted); margin-left:6px; }
+  .opt.quit { color:var(--muted); margin-top:14px; }
   input[type=text] { width:100%; padding:12px; font-size:16px; border:1px solid var(--line);
                      border-radius:8px; margin-bottom:8px; }
   button { width:100%; padding:13px; font-size:16px; border:none; border-radius:8px;
@@ -131,15 +132,21 @@ function render() {
   html += '<h1>' + esc(s.date) + '　' + esc(s.venue) + '</h1>' +
           '<p class="sub">' + esc(s.time) + '　' + esc(s.courts) + ' 面場</p>';
 
-  S.data.slots.forEach(function (slot, i) {
-    var note = ['全場','早退','晚到',''][i] || '';
-    html += '<div class="opt' + (S.slot === slot ? ' on' : '') + '" data-slot="' + esc(slot) + '">' +
-              '<span>' + esc(slot) + (note ? '<small>' + note + '</small>' : '') + '</span>' +
+  s.slots.forEach(function (o) {
+    html += '<div class="opt' + (S.slot === o.v ? ' on' : '') + '" data-slot="' + esc(o.v) + '">' +
+              '<span>' + esc(o.v) + (o.note ? '<small>' + o.note + '</small>' : '') + '</span>' +
               '<span class="tick">✓</span></div>';
   });
 
+  // 只有報過名的人需要退出的路；還沒報名的人看到「取消報名」只會困惑
+  if (s.mine) {
+    html += '<div class="opt quit' + (S.slot === S.data.leave ? ' on' : '') +
+            '" data-slot="' + esc(S.data.leave) + '">' +
+              '<span>取消報名</span><span class="tick">✓</span></div>';
+  }
+
   html += '<button id="send"' + (S.slot ? '' : ' disabled') + '>' +
-          (s.mine ? '更新報名' : '送出') + '</button>';
+          (S.slot === S.data.leave ? '確認取消' : (s.mine ? '更新報名' : '送出')) + '</button>';
 
   html += '<div class="roster"><b>' + esc(s.date) + ' 已報名 ' + s.roster.length + ' 人</b>' +
           (s.roster.length
@@ -171,7 +178,7 @@ function render() {
     api({ action:'signup', userId:S.userId, date:s.date, slot:S.slot }).then(function (r) {
       if (!r.ok) throw new Error(r.error);
       s.mine = S.slot;
-      btn.textContent = '已登記，關閉中…';
+      btn.textContent = (S.slot === S.data.leave ? '已取消，關閉中…' : '已登記，關閉中…');
       setTimeout(function () { liff.closeWindow(); }, 600);
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = '送出';
