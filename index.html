@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>羽球報名</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { --line:#e6e6e6; --muted:#888; --accent:#06c755; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; padding:16px; font-family:-apple-system,"Noto Sans TC",sans-serif;
+         font-size:16px; color:#111; background:#fff; }
+  h1 { font-size:17px; font-weight:500; margin:0 0 2px; }
+  .sub { font-size:13px; color:var(--muted); margin:0 0 14px; }
+  .who { font-size:13px; color:var(--muted); margin:0 0 14px; }
+  .who a { color:var(--accent); text-decoration:none; margin-left:6px; }
+  .tabs { display:flex; gap:8px; margin-bottom:14px; }
+  .tab { flex:1; border:1px solid var(--line); border-radius:8px; padding:10px;
+         text-align:center; font-size:14px; line-height:1.4; }
+  .tab.on { border:2px solid var(--accent); padding:9px; }
+  .tab small { display:block; color:var(--muted); font-size:12px; }
+  .tab .badge { display:block; color:var(--accent); font-size:12px; margin-top:2px; }
+  .opt { border:1px solid var(--line); border-radius:8px; padding:13px 14px; margin-bottom:8px;
+         display:flex; justify-content:space-between; align-items:center; }
+  .opt.on { border:2px solid var(--accent); padding:12px 13px; }
+  .opt .tick { color:var(--accent); display:none; }
+  .opt.on .tick { display:inline; }
+  .opt small { color:var(--muted); margin-left:6px; }
+  input[type=text] { width:100%; padding:12px; font-size:16px; border:1px solid var(--line);
+                     border-radius:8px; margin-bottom:8px; }
+  button { width:100%; padding:13px; font-size:16px; border:none; border-radius:8px;
+           background:var(--accent); color:#fff; margin-top:8px; }
+  button:disabled { background:#ccc; }
+  .roster { border-top:1px solid var(--line); margin-top:18px; padding-top:12px;
+            font-size:14px; line-height:1.8; color:#444; }
+  .roster b { display:block; font-size:12px; color:var(--muted); font-weight:400; margin-bottom:4px; }
+  .err { color:#c00; font-size:14px; margin-top:8px; }
+  .hint { color:var(--muted); font-size:13px; margin-top:10px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div id="app">載入中…</div>
+
+<script>
+// ── 改成你自己的兩個值 ──────────────────────────
+var LIFF_ID = '2000000000-abcdefgh';
+var API_URL = 'https://script.google.com/macros/s/XXXXXXXX/exec';
+// ───────────────────────────────────────────────
+
+var app = document.getElementById('app');
+var S = { userId:null, data:null, idx:0, slot:null };
+
+function api(payload) {
+  return fetch(API_URL, {
+    method:'POST',
+    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  }).then(function (r) { return r.json(); });
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c];
+  });
+}
+
+function fail(msg) { app.innerHTML = '<p class="err">' + esc(msg) + '</p>'; }
+
+function boot() {
+  return api({ action:'load', userId:S.userId }).then(function (d) {
+    if (!d.ok) return fail(d.error);
+    S.data = d;
+    if (d.needsBinding) return renderName('');
+    var want = new URLSearchParams(location.search).get('d');
+    var hit = d.sessions.findIndex(function (s) { return s.date === want; });
+    S.idx = hit >= 0 ? hit : 0;
+    S.slot = d.sessions[S.idx].mine;
+    render();
+  });
+}
+
+liff.init({ liffId: LIFF_ID })
+  .then(function () { return liff.getProfile(); })
+  .then(function (p) { S.userId = p.userId; return boot(); })
+  .catch(function (e) { fail('初始化失敗：' + (e.message || e)); });
+
+/** 第一次來的人自己打名字；也用在之後改名 */
+function renderName(current) {
+  app.innerHTML =
+    '<h1>' + (current ? '改一下名字' : '你的名字是？') + '</h1>' +
+    '<p class="sub">打一次就好，之後這支手機進來會自動認出你。請用大家認得的名字，方便分帳。</p>' +
+    '<input type="text" id="nm" maxlength="10" placeholder="王小明" value="' + esc(current) + '">' +
+    '<button id="ok" disabled>確認</button>' +
+    (current ? '<button id="cancel" style="background:#eee;color:#333">取消</button>' : '');
+
+  var box = document.getElementById('nm'), btn = document.getElementById('ok');
+  function sync() { btn.disabled = !box.value.trim(); }
+  box.oninput = sync; sync();
+  box.focus();
+
+  var cancel = document.getElementById('cancel');
+  if (cancel) cancel.onclick = render;
+
+  btn.onclick = function () {
+    btn.disabled = true;
+    api({ action:'bind', userId:S.userId, name:box.value.trim() }).then(function (r) {
+      if (!r.ok) {
+        btn.disabled = false;
+        app.insertAdjacentHTML('beforeend', '<p class="err">' + esc(r.error) + '</p>');
+        return;
+      }
+      return boot();
+    });
+  };
+}
+
+function render() {
+  var list = S.data.sessions;
+  var s = list[S.idx];
+  var html = '<p class="who">目前登記為 ' + esc(S.data.name) +
+             '<a href="#" id="rename">不是你？</a></p>';
+
+  if (list.length > 1) {
+    html += '<div class="tabs">' + list.map(function (x, i) {
+      return '<div class="tab' + (i === S.idx ? ' on' : '') + '" data-i="' + i + '">' +
+               esc(x.date) + '<small>' + esc(x.venue) + '</small>' +
+               (x.mine ? '<span class="badge">已報名</span>' : '') + '</div>';
+    }).join('') + '</div>';
+  }
+
+  html += '<h1>' + esc(s.date) + '　' + esc(s.venue) + '</h1>' +
+          '<p class="sub">' + esc(s.time) + '　' + esc(s.courts) + ' 面場</p>';
+
+  S.data.slots.forEach(function (slot, i) {
+    var note = ['全場','早退','晚到',''][i] || '';
+    html += '<div class="opt' + (S.slot === slot ? ' on' : '') + '" data-slot="' + esc(slot) + '">' +
+              '<span>' + esc(slot) + (note ? '<small>' + note + '</small>' : '') + '</span>' +
+              '<span class="tick">✓</span></div>';
+  });
+
+  html += '<button id="send"' + (S.slot ? '' : ' disabled') + '>' +
+          (s.mine ? '更新報名' : '送出') + '</button>';
+
+  html += '<div class="roster"><b>' + esc(s.date) + ' 已報名 ' + s.roster.length + ' 人</b>' +
+          (s.roster.length
+            ? s.roster.map(function (r) { return esc(r.name) + '（' + esc(r.slot) + '）'; }).join('、')
+            : '還沒有人報名') + '</div>';
+
+  app.innerHTML = html;
+
+  document.getElementById('rename').onclick = function (e) {
+    e.preventDefault();
+    renderName(S.data.name);
+  };
+
+  Array.prototype.forEach.call(app.querySelectorAll('.tab'), function (el) {
+    el.onclick = function () {
+      S.idx = +el.dataset.i;
+      S.slot = list[S.idx].mine;
+      render();
+    };
+  });
+
+  Array.prototype.forEach.call(app.querySelectorAll('.opt'), function (el) {
+    el.onclick = function () { S.slot = el.dataset.slot; render(); };
+  });
+
+  document.getElementById('send').onclick = function () {
+    var btn = this;
+    btn.disabled = true; btn.textContent = '送出中…';
+    api({ action:'signup', userId:S.userId, date:s.date, slot:S.slot }).then(function (r) {
+      if (!r.ok) throw new Error(r.error);
+      s.mine = S.slot;
+      btn.textContent = '已登記，關閉中…';
+      setTimeout(function () { liff.closeWindow(); }, 600);
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '送出';
+      app.insertAdjacentHTML('beforeend',
+        '<p class="err">' + esc(e.message || '送出失敗') + '</p>' +
+        '<p class="hint">請稍後再試一次。<br>還是不行的話，直接跟團主說一聲幫你補上就好。</p>');
+    });
+  };
+}
+</script>
+</body>
+</html>
