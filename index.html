@@ -14,6 +14,7 @@
   .sub { font-size:13px; color:var(--muted); margin:0 0 14px; }
   .who { font-size:13px; color:var(--muted); margin:0 0 14px; }
   .who a { color:var(--accent); text-decoration:none; margin-left:6px; }
+  .who .sync { margin-left:8px; opacity:.6; }
   .tabs { display:flex; gap:8px; margin-bottom:14px; }
   .tab { flex:1; border:1px solid var(--line); border-radius:8px; padding:10px;
          text-align:center; font-size:14px; line-height:1.4; }
@@ -49,7 +50,22 @@ var API_URL = 'https://script.google.com/macros/s/AKfycbz4sOUrBL1TA7JIpPClpRuDuR
 // ───────────────────────────────────────────────
 
 var app = document.getElementById('app');
-var S = { userId:null, data:null, idx:0, slot:null };
+var S = { userId:null, data:null, idx:0, slot:null, touched:false, fresh:false };
+
+// 上次的 userId 和畫面資料。userId 不會變，資料只拿來搶先畫個底稿。
+var CACHE_KEY = 'badminton_v1';
+var CACHE_PAINT_MS = 3 * 24 * 60 * 60 * 1000;   // 太舊的場次別拿出來誤導人
+
+function loadCache() {
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) { return null; }
+}
+
+function saveCache() {
+  try {
+    localStorage.setItem(CACHE_KEY,
+      JSON.stringify({ userId:S.userId, data:S.data, ts:Date.now() }));
+  } catch (e) {}   // 無痕模式會丟例外，快取只是加速，壞掉不影響功能
+}
 
 function api(payload) {
   return fetch(API_URL, {
@@ -67,23 +83,64 @@ function esc(s) {
 
 function fail(msg) { app.innerHTML = '<p class="err">' + esc(msg) + '</p>'; }
 
-function boot() {
-  return api({ action:'load', userId:S.userId }).then(function (d) {
-    if (!d.ok) return fail(d.error);
-    S.data = d;
-    if (d.needsBinding) return renderName('');
+/** 把資料套進畫面。fresh=false 代表這是快取來的底稿，等真資料回來會再蓋一次 */
+function applyData(d, fresh) {
+  S.data = d;
+  if (!S.touched) {
     var want = new URLSearchParams(location.search).get('d');
     var hit = d.sessions.findIndex(function (s) { return s.date === want; });
     S.idx = hit >= 0 ? hit : 0;
     S.slot = d.sessions[S.idx].mine;
-    render();
+  } else if (S.idx >= d.sessions.length) {
+    S.idx = 0;
+  }
+  if (fresh) { S.fresh = true; saveCache(); }
+  render();
+}
+
+function boot() {
+  return api({ action:'load', userId:S.userId }).then(function (d) {
+    if (!d.ok) return fail(d.error);
+    if (d.needsBinding) return renderName('');
+    S.touched = false;
+    applyData(d, true);
   });
+}
+
+// ── 搶跑：不等 liff.init 跑完就先發請求、先畫舊資料 ──────────
+// liff.init + getProfile 要花好幾百毫秒，那段時間乾等很浪費。
+var cache = loadCache();
+var pending = null;
+
+if (cache && cache.userId) {
+  S.userId = cache.userId;
+  pending = api({ action:'load', userId:cache.userId });
+  if (cache.data && cache.data.ok && !cache.data.needsBinding &&
+      Date.now() - (cache.ts || 0) < CACHE_PAINT_MS) {
+    applyData(cache.data, false);
+  }
 }
 
 liff.init({ liffId: LIFF_ID })
   .then(function () { return liff.getProfile(); })
-  .then(function (p) { S.userId = p.userId; return boot(); })
-  .catch(function (e) { fail('初始化失敗：' + (e.message || e)); });
+  .then(function (p) {
+    if (S.userId !== p.userId) {   // 換人用同一支手機，剛剛那趟白跑了
+      S.userId = p.userId;
+      S.touched = false;
+      S.data = null;
+      pending = null;
+    }
+    return pending || api({ action:'load', userId:p.userId });
+  })
+  .then(function (d) {
+    if (!d.ok) return fail(d.error);
+    if (d.needsBinding) return renderName('');
+    applyData(d, true);
+  })
+  .catch(function (e) {
+    if (S.data) return;   // 已經有快取畫面了，別把它洗成錯誤訊息
+    fail('初始化失敗：' + (e.message || e));
+  });
 
 /** 第一次來的人自己打名字；也用在之後改名 */
 function renderName(current) {
@@ -119,7 +176,8 @@ function render() {
   var list = S.data.sessions;
   var s = list[S.idx];
   var html = '<p class="who">目前登記為 ' + esc(S.data.name) +
-             '<a href="#" id="rename">不是你？</a></p>';
+             '<a href="#" id="rename">不是你？</a>' +
+             (S.fresh ? '' : '<span class="sync">更新中…</span>') + '</p>';
 
   if (list.length > 1) {
     html += '<div class="tabs">' + list.map(function (x, i) {
@@ -162,6 +220,7 @@ function render() {
 
   Array.prototype.forEach.call(app.querySelectorAll('.tab'), function (el) {
     el.onclick = function () {
+      S.touched = true;
       S.idx = +el.dataset.i;
       S.slot = list[S.idx].mine;
       render();
@@ -169,7 +228,7 @@ function render() {
   });
 
   Array.prototype.forEach.call(app.querySelectorAll('.opt'), function (el) {
-    el.onclick = function () { S.slot = el.dataset.slot; render(); };
+    el.onclick = function () { S.touched = true; S.slot = el.dataset.slot; render(); };
   });
 
   document.getElementById('send').onclick = function () {
